@@ -4,8 +4,8 @@ A small Haskell client for the [Shodan API](https://developer.shodan.io/api).
 
 Licensed under the [BSD 3-Clause License](LICENSE).
 
-Version **0.2.0.0** is being prepared for release. See the [changelog](CHANGELOG.md)
-for additions and the `ShodanError` constructor change requiring a PVP major bump.
+Current version: **0.3.0.0**. See the [changelog](CHANGELOG.md)
+for additions and the `SearchMatch` constructor change requiring a PVP major bump.
 
 This project supports `GET /api-info` (`ApiInfo` and `UsageLimits`),
 `GET /shodan/host/count` (`CountResult`), and one-page
@@ -113,7 +113,7 @@ will be added separately.
 Both fields are required. Unknown fields are ignored, while missing fields,
 invalid counts, and non-object buckets are rejected.
 
-## Search (0.2.0.0, unreleased)
+## Search
 
 Version 0.2.0.0 adds one-page searches:
 
@@ -138,11 +138,11 @@ These commands call Shodan and can use query credits: a filtered query or any
 page after the first uses a credit under the [official API
 policy](https://developer.shodan.io/api). The example prints the total across
 all pages, the selected page number, the returned service count, and a table of
-IP, port, product, and ASN. Missing product/ASN values are displayed as `-`.
+IP, port, product, version, and ASN. Missing product/version/ASN values are displayed as `-`.
 
 `SearchMatch` describes one matching service with `matchIp`, `matchPort`,
-`matchProduct`, and `matchAsn`. IP text and an integer port from 0 through 65535
-are required. Product and ASN are optional: missing or null values become
+`matchProduct`, `matchVersion`, and `matchAsn`. IP text and an integer port from 0 through 65535
+are required. Product, version, and ASN are optional: missing or null values become
 `Nothing`, while other non-text values are rejected. IP syntax is not validated.
 Unknown banner fields are ignored.
 

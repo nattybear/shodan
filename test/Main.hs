@@ -188,7 +188,7 @@ searchHttpTests = do
       query = "http.title:\"한글 + & ?\" product:nginx"
       responseBody = "{\"total\":101,\"matches\":[{\"ip_str\":\"192.0.2.1\",\"port\":443,\"product\":\"nginx\",\"asn\":\"AS65536\"}]}"
       expected = Right (SearchResult 101
-        [SearchMatch "192.0.2.1" 443 (Just "nginx") (Just "AS65536")] Map.empty)
+        [SearchMatch "192.0.2.1" 443 (Just "nginx") Nothing (Just "AS65536")] Map.empty)
       application page request respond = do
         check "search GET" (Wai.requestMethod request == "GET")
         check "search path" (Wai.pathInfo request == ["shodan", "host", "search"])

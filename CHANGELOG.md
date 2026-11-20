@@ -2,7 +2,22 @@
 
 This package follows the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
-## 0.2.0.0 — Unreleased
+## 0.3.0.0 — 2026-11-20
+
+### Breaking changes
+
+- Added `matchVersion :: Maybe Text` to `SearchMatch`, changing its constructor
+  arity. Update positional constructor calls and patterns for the new field
+  between product and ASN. This datatype change requires a PVP major bump.
+
+### Additions
+
+- Parse the optional Shodan `version` string; missing or null values become
+  `Nothing`, and non-text values are rejected.
+- Display a `VERSION` column in `shodan-search`, using `-` when unavailable.
+- Test present, absent, null, and invalid version values.
+
+## 0.2.0.0 — 2026-11-20
 
 ### Breaking changes
 

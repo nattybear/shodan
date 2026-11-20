@@ -130,6 +130,8 @@ data SearchMatch = SearchMatch
     -- ^ Required integer port, from 0 through 65535.
   , matchProduct :: Maybe Text
     -- ^ Detected product; absent or null means 'Nothing'.
+  , matchVersion :: Maybe Text
+    -- ^ Detected product version; absent or null means 'Nothing'.
   , matchAsn     :: Maybe Text
     -- ^ ASN such as @AS65536@; absent or null means 'Nothing'.
   } deriving (Eq, Show)
@@ -139,10 +141,11 @@ instance FromJSON SearchMatch where
     ip <- o .: "ip_str"
     port <- o .: "port"
     productName <- o .:? "product"
+    version <- o .:? "version"
     asn <- o .:? "asn"
     if port < 0 || port > 65535
       then fail "Search match port must be between 0 and 65535"
-      else pure (SearchMatch ip port productName asn)
+      else pure (SearchMatch ip port productName version asn)
 
 -- | One page returned by @GET /shodan/host/search@.
 -- The total covers the whole query and may exceed this page's match count.

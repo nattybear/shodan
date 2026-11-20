@@ -27,7 +27,7 @@ main = do
               putStrLn ("Total: " ++ show (searchTotal found))
               putStrLn ("Page: " ++ show page)
               putStrLn ("Returned: " ++ show (length (searchMatches found)))
-              putStrLn "IP\tPORT\tPRODUCT\tASN"
+              putStrLn "IP\tPORT\tPRODUCT\tVERSION\tASN"
               mapM_ printMatch (searchMatches found)
 
 parseArguments :: [String] -> IO (Text.Text, Int)
@@ -44,5 +44,6 @@ printMatch match = putStrLn (intercalate "\t"
   [ Text.unpack (matchIp match)
   , show (matchPort match)
   , maybe "-" Text.unpack (matchProduct match)
+  , maybe "-" Text.unpack (matchVersion match)
   , maybe "-" Text.unpack (matchAsn match)
   ])
