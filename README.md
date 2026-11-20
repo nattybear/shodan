@@ -2,6 +2,8 @@
 
 A small Haskell client for the [Shodan API](https://developer.shodan.io/api).
 
+Licensed under the [BSD 3-Clause License](LICENSE).
+
 This project currently supports `GET /api-info` (`ApiInfo` and `UsageLimits`)
 and `GET /shodan/host/count` (`CountResult`). The API-info example fields and
 the count response's `total` field are required; unknown fields are ignored.
