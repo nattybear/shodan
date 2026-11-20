@@ -1,12 +1,13 @@
 cabal-version: 2.4
 name: shodan
-version: 0.3.0.0
+version: 0.4.0.0
 license: BSD-3-Clause
 license-file: LICENSE
 synopsis: A simple Haskell client for the Shodan API
 description:
   A small Shodan API client using ordinary records and explicit IO functions.
-  Supports API plan information, search result counts, and paginated searches,
+  Supports API plan information, search result counts, paginated searches,
+  and domain DNS information,
   with JSON response types for facet statistics. Includes executable examples
   and local HTTP tests.
 category: Network
@@ -66,10 +67,20 @@ executable shodan-search
   default-language: Haskell2010
   ghc-options: -Wall -threaded
 
+executable shodan-domain
+  main-is: Main.hs
+  hs-source-dirs: examples/domain
+  build-depends:
+    base >= 4.19 && < 5,
+    shodan,
+    text >= 2.1 && < 2.2
+  default-language: Haskell2010
+  ghc-options: -Wall -threaded
+
 test-suite shodan-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
-  other-modules: SearchTests
+  other-modules: SearchTests, DnsTests
   hs-source-dirs: test
   build-depends:
     base >= 4.19 && < 5,

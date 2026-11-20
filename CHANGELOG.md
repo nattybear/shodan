@@ -2,6 +2,37 @@
 
 This package follows the [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## 0.4.0.0 — 2026-11-21
+
+### Breaking changes
+
+- Add `InvalidDomain` to `ShodanError`; exhaustive handlers need a new case.
+- Append timestamp, hostname, domain, ALPN, and certificate DNS name fields to the public `SearchMatch`
+  constructor. Positional construction and patterns need five additional fields;
+  this datatype change requires a PVP major bump.
+
+### Additions
+
+- Add `getDomainInfo`, `DomainInfo`, and `DnsRecord` for a single page of domain
+  DNS information, with explicit page selection and validation before HTTP.
+- Add `shodan-domain DOMAIN [PAGE]`, including subdomains, records, last-seen
+  timestamps, and the next-page flag. Each lookup uses one query credit;
+  history and record-type filters are not implemented yet.
+- Add domain parsing, HTTP, and argument validation tests and documentation.
+  Verify a live domain lookup manually; use `domainMore` rather than assuming
+  a fixed number of records per page.
+- Add `matchTimestamp` (UTC collection time preserved as text), `matchHostnames`,
+  `matchDomains`, and nested `ssl.alpn` as `matchAlpn`.
+- Missing or null metadata becomes `Nothing`; empty lists remain `Just []`.
+  Incorrect JSON types are rejected. Timestamp syntax is not validated.
+- Show collection time, hostnames, domains, and ALPN in the search executable.
+- Add `matchCertificateNames` and a `CERTIFICATE_NAMES` column for DNS names
+  from the leaf certificate SAN, including wildcards. Decode DER and escaped
+  byte representations; omit non-DNS entries and reject malformed SAN data.
+  Certificate names are candidates, not verified DNS mappings or live sites.
+- Add local parsing tests and document the meaning and limits of the metadata.
+- Verify search metadata manually; automated tests remain local.
+
 ## 0.3.0.0 — 2026-11-20
 
 ### Breaking changes

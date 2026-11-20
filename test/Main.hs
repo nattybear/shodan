@@ -12,6 +12,7 @@ import qualified Data.ByteString.Lazy     as Lazy
 import qualified Data.Map.Strict          as Map
 import qualified Data.Text                as Text
 import qualified Data.Text.Encoding       as TextEncoding
+import           DnsTests                 (dnsParsingTests)
 import qualified Network.HTTP.Client      as HTTP
 import qualified Network.HTTP.Types       as HTTPTypes
 import qualified Network.Wai              as Wai
@@ -37,9 +38,11 @@ main = do
   rejects "non-object response" (Array mempty)
   facetTests
   countParsingTests
+  dnsParsingTests
   searchParsingTests
   httpTests
   countTests
+  domainHttpTests
   searchHttpTests
   putStrLn "All response parsing and HTTP tests passed."
 
@@ -188,7 +191,7 @@ searchHttpTests = do
       query = "http.title:\"한글 + & ?\" product:nginx"
       responseBody = "{\"total\":101,\"matches\":[{\"ip_str\":\"192.0.2.1\",\"port\":443,\"product\":\"nginx\",\"asn\":\"AS65536\"}]}"
       expected = Right (SearchResult 101
-        [SearchMatch "192.0.2.1" 443 (Just "nginx") Nothing (Just "AS65536")] Map.empty)
+        [SearchMatch "192.0.2.1" 443 (Just "nginx") Nothing (Just "AS65536") Nothing Nothing Nothing Nothing Nothing] Map.empty)
       application page request respond = do
         check "search GET" (Wai.requestMethod request == "GET")
         check "search path" (Wai.pathInfo request == ["shodan", "host", "search"])
@@ -223,6 +226,58 @@ searchHttpTests = do
     withMockClient key mock $ \client -> do
       actual <- searchHosts client query 1
       check label (actual == wanted)) cases
+
+domainHttpTests :: IO ()
+domainHttpTests = do
+  let key = "dns-key+&한글"
+      body = "{\"domain\":\"Example.COM\",\"tags\":[],\"data\":[],\"subdomains\":[\"www\"],\"more\":true}"
+      expected = Right (DomainInfo "Example.COM" [] [] ["www"] True)
+      application page request respond = do
+        check "domain GET" (Wai.requestMethod request == "GET")
+        check "domain path" (Wai.rawPathInfo request == "/dns/domain/Example.COM")
+        check "domain parameters" (Wai.queryString request ==
+          [("key", Just (TextEncoding.encodeUtf8 key)), ("page", Just page)])
+        check "domain accepts JSON" (lookup "Accept" (Wai.requestHeaders request) == Just "application/json")
+        respond (Wai.responseLBS HTTPTypes.status200 [] body)
+  mapM_ (\(page, encoded) -> withMockClient key (application encoded) $ \client -> do
+    actual <- getDomainInfo client "Example.COM" page
+    check "domain selected page" (actual == expected)) [(1,"1"), (2,"2")]
+  manager <- HTTP.newManager HTTP.defaultManagerSettings
+    { HTTP.managerModifyRequest = \_ -> fail "Invalid DNS argument sent HTTP" }
+  let client = newClientWithManager manager key
+  mapM_ (\page -> do
+    actual <- getDomainInfo client "example.com" page
+    check "invalid DNS page" (actual == Left InvalidPage)) [0,-1]
+  mapM_ (\domain -> do
+    actual <- getDomainInfo client domain 1
+    check "invalid DNS domain" (actual == Left InvalidDomain))
+    ["", " ", ".", "example..com", "example.com.", "-bad.com", "bad-.com",
+     "https://example.com", "example.com/path", "example.com?key=oops",
+     "example.com#fragment", "example%2f.com", "example_com", "한글.com",
+     Text.replicate 64 "a" <> ".com", Text.intercalate "." (replicate 4 (Text.replicate 63 "a"))]
+  -- Longest allowed labels and complete name are accepted without modification.
+  let longest = Text.intercalate "." (replicate 3 (Text.replicate 63 "a") ++ [Text.replicate 61 "b"])
+  mapM_ (\domain -> do
+    let mock request respond = do
+          check "DNS name passed verbatim" (Wai.pathInfo request == ["dns", "domain", domain])
+          respond (Wai.responseLBS HTTPTypes.status200 [] body)
+    withMockClient key mock $ \validClient -> do
+      actual <- getDomainInfo validClient domain 1
+      check "valid DNS name" (actual == expected)) ["xn--3e0b707e.com", "a-b.example.com", longest]
+  let cases =
+        [(HTTPTypes.status401, "secret", Left (HttpError 401)),
+         (HTTPTypes.status403, "secret", Left (HttpError 403)),
+         (HTTPTypes.status404, "secret", Left (HttpError 404)),
+         (HTTPTypes.status429, "secret", Left (HttpError 429)),
+         (HTTPTypes.status500, "secret", Left (HttpError 500)),
+         (HTTPTypes.status302, "redirect", Left (HttpError 302)),
+         (HTTPTypes.status200, "not JSON", Left InvalidResponse),
+         (HTTPTypes.status200, "{}", Left InvalidResponse)]
+  mapM_ (\(status, responseBody, wanted) -> do
+    let mock _ respond = respond (Wai.responseLBS status [("Location", "/unexpected")] responseBody)
+    withMockClient key mock $ \validClient -> do
+      actual <- getDomainInfo validClient "example.com" 1
+      check "domain HTTP error" (actual == wanted)) cases
 
 countResponse :: String -> HTTPTypes.Status -> Lazy.ByteString
   -> Either ShodanError CountResult -> IO ()

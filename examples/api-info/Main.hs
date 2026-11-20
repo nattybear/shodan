@@ -28,4 +28,5 @@ errorMessage :: ShodanError -> String
 errorMessage NetworkError = "Could not reach Shodan (connection failure or timeout)."
 errorMessage (HttpError status) = "Shodan returned HTTP " ++ show status ++ "."
 errorMessage InvalidResponse = "Shodan returned an unexpected response."
-errorMessage InvalidPage = "Search page numbers must be at least 1."
+errorMessage InvalidPage = "Page numbers must be at least 1."
+errorMessage InvalidDomain = "Expected an ASCII DNS domain name without a URL or trailing dot."

@@ -9,6 +9,9 @@ module Shodan
   , getApiInfo
   , countHosts
   , searchHosts
+  , getDomainInfo
+  , DomainInfo (..)
+  , DnsRecord (..)
   , CountResult (..)
   , Facet (..)
   , SearchMatch (..)
@@ -20,6 +23,8 @@ module Shodan
 import           Control.Exception       (catch)
 import           Data.Aeson              (FromJSON (..), Value, eitherDecode',
                                           withObject, (.!=), (.:!), (.:), (.:?))
+import           Data.Aeson.Types        (Parser)
+import           Data.Char               (chr, digitToInt, isHexDigit, ord)
 import           Data.Map.Strict         (Map)
 import qualified Data.Map.Strict         as Map
 import           Data.Text               (Text)
@@ -54,7 +59,10 @@ data ShodanError
   | HttpError Int
   | InvalidResponse
   | InvalidPage
-    -- ^ Search page numbers must be at least 1. No request was made.
+    -- ^ Search and DNS page numbers must be at least 1. No request was made.
+  | InvalidDomain
+    -- ^ Expected an ASCII DNS name (use punycode for international names),
+    -- without a URL, trailing dot, empty label, or leading/trailing hyphen.
   deriving (Eq, Show)
 
 -- | Retrieve @GET https://api.shodan.io/api-info@.
@@ -81,6 +89,80 @@ searchHosts client query page
   | page < 1 = pure (Left InvalidPage)
   | otherwise = getJSON client "/shodan/host/search"
       [("query", query), ("page", DataText.pack (show page))]
+
+-- | Retrieve one page of @GET /dns/domain/{domain}@. Shodan documents 100
+-- records per page, but observed responses can exceed this; use 'domainMore'
+-- rather than the record count to determine whether another page is available.
+-- Uses one query credit per lookup according to the official API documentation.
+-- Page numbers start at 1; additional pages are never fetched automatically.
+-- Use 'domainMore' to decide whether to request the next page. The API defaults
+-- are used: no historical records and no record-type filter.
+-- Domain names must consist of ASCII labels of 1-63 letters, digits or hyphens,
+-- with a total length of at most 253, and no leading/trailing label hyphens.
+-- International names must be supplied in punycode; no DNS resolution is done.
+-- Invalid pages or names are rejected before HTTP. Returned DNS data is an
+-- observation by Shodan, not a guarantee of a current mapping or a complete list.
+getDomainInfo :: Client -> Text -> Int -> IO (Either ShodanError DomainInfo)
+getDomainInfo client domain page
+  | page < 1 = pure (Left InvalidPage)
+  | not (validDomain domain) = pure (Left InvalidDomain)
+  | otherwise = getJSON client ("/dns/domain/" <> domain)
+      [("page", DataText.pack (show page))]
+
+validDomain :: Text -> Bool
+validDomain domain = DataText.length domain <= 253 &&
+  all validLabel (DataText.splitOn "." domain)
+  where
+    validLabel label = not (DataText.null label) && DataText.length label <= 63 &&
+      not (DataText.isPrefixOf "-" label || DataText.isSuffixOf "-" label) &&
+      DataText.all (\c -> asciiLetter c || (c >= '0' && c <= '9') || c == '-') label
+    asciiLetter c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+
+-- | One observed DNS record. All fields are required strings; unknown JSON
+-- fields are ignored. Empty subdomains denote the apex domain. Wildcard names
+-- are preserved. Type and value remain text for forward compatibility; neither
+-- DNS syntax nor the timestamp format is validated during response parsing.
+data DnsRecord = DnsRecord
+  { dnsSubdomain :: Text
+    -- ^ Relative name, for example @www@, @*.api@, or empty for the apex.
+  , dnsType      :: Text
+    -- ^ Record type such as @A@, @AAAA@, @CNAME@, @MX@, or @TXT@.
+  , dnsValue     :: Text
+    -- ^ Record value, preserved as returned rather than interpreted as an IP.
+  , dnsLastSeen  :: Text
+    -- ^ Shodan's last-observed timestamp, including its supplied timezone.
+  } deriving (Eq, Show)
+
+instance FromJSON DnsRecord where
+  parseJSON = withObject "DnsRecord" $ \o -> DnsRecord
+    <$> o .: "subdomain"
+    <*> o .: "type"
+    <*> o .: "value"
+    <*> o .: "last_seen"
+
+-- | A single page of domain information. All fields are required and unknown
+-- fields are ignored. Lists preserve order, including wildcards and duplicates.
+-- Empty lists are valid; missing/null lists and malformed records are rejected.
+data DomainInfo = DomainInfo
+  { domainName       :: Text
+    -- ^ Domain as reported by Shodan.
+  , domainTags       :: [Text]
+    -- ^ Tags associated with this domain.
+  , domainRecords    :: [DnsRecord]
+    -- ^ DNS records on this page; not automatically combined with later pages.
+  , domainSubdomains :: [Text]
+    -- ^ Relative subdomain names returned by the API, not recomputed from records.
+  , domainMore       :: Bool
+    -- ^ Whether more DNS record pages are available.
+  } deriving (Eq, Show)
+
+instance FromJSON DomainInfo where
+  parseJSON = withObject "DomainInfo" $ \o -> DomainInfo
+    <$> o .: "domain"
+    <*> o .: "tags"
+    <*> o .: "data"
+    <*> o .: "subdomains"
+    <*> o .: "more"
 
 -- | Total matching results and optional breakdowns from @GET /shodan/host/count@.
 data CountResult = CountResult
@@ -124,16 +206,31 @@ instance FromJSON Facet where
 -- Unmodelled banner fields are ignored. The IP address is preserved as text;
 -- its syntax is not validated here.
 data SearchMatch = SearchMatch
-  { matchIp      :: Text
+  { matchIp               :: Text
     -- ^ Required @ip_str@ field, usable for IPv4 or IPv6 text.
-  , matchPort    :: Int
+  , matchPort             :: Int
     -- ^ Required integer port, from 0 through 65535.
-  , matchProduct :: Maybe Text
+  , matchProduct          :: Maybe Text
     -- ^ Detected product; absent or null means 'Nothing'.
-  , matchVersion :: Maybe Text
+  , matchVersion          :: Maybe Text
     -- ^ Detected product version; absent or null means 'Nothing'.
-  , matchAsn     :: Maybe Text
+  , matchAsn              :: Maybe Text
     -- ^ ASN such as @AS65536@; absent or null means 'Nothing'.
+  , matchTimestamp        :: Maybe Text
+    -- ^ Banner collection time in UTC, preserved as supplied; not date-validated.
+  , matchHostnames        :: Maybe [Text]
+    -- ^ Hostnames based on reverse DNS; not an exhaustive list of hosted sites.
+  , matchDomains          :: Maybe [Text]
+    -- ^ Domains reported by Shodan, preserving order.
+  , matchAlpn             :: Maybe [Text]
+    -- ^ Observed @ssl.alpn@ protocols, such as @h2@ and @http/1.1@.
+    -- Missing data does not imply that a protocol is unsupported.
+  , matchCertificateNames :: Maybe [Text]
+    -- ^ DNS names from the leaf certificate's @subjectAltName@ extension.
+    -- Wildcards and order are preserved; IP, URI and email entries are omitted.
+    -- These names are candidates, not verified DNS mappings or live sites.
+    -- Missing certificate/extensions/SAN means 'Nothing'; a SAN without DNS
+    -- entries yields @Just []@. Malformed SAN data rejects the response.
   } deriving (Eq, Show)
 
 instance FromJSON SearchMatch where
@@ -143,9 +240,92 @@ instance FromJSON SearchMatch where
     productName <- o .:? "product"
     version <- o .:? "version"
     asn <- o .:? "asn"
+    timestamp <- o .:? "timestamp"
+    hostnames <- o .:? "hostnames"
+    domains <- o .:? "domains"
+    ssl <- o .:? "ssl"
+    (alpn, certificateNames) <- case ssl of
+      Nothing -> pure (Nothing, Nothing)
+      Just value -> withObject "ssl" (\tls -> do
+        protocols <- tls .:? "alpn"
+        cert <- tls .:? "cert"
+        names <- case cert of
+          Nothing -> pure Nothing
+          Just certificate -> withObject "certificate" (\c -> do
+            extensions <- c .:? "extensions"
+            case extensions of
+              Nothing -> pure Nothing
+              Just entries -> do
+                decoded <- mapM parseCertificateExtension entries
+                let sans = [names | Just names <- decoded]
+                pure (if null sans then Nothing else Just (concat sans))) certificate
+        pure (protocols, names)) value
     if port < 0 || port > 65535
       then fail "Search match port must be between 0 and 65535"
-      else pure (SearchMatch ip port productName version asn)
+      else pure (SearchMatch ip port productName version asn timestamp hostnames domains alpn certificateNames)
+
+-- Shodan represents extension DER as text, sometimes with literal Python-style
+-- escapes (as in its official example). Decode bytes before reading the SAN.
+parseCertificateExtension :: Value -> Parser (Maybe [Text])
+parseCertificateExtension value = withObject "certificate extension" (\extension -> do
+  name <- extension .: "name"
+  if name /= ("subjectAltName" :: Text)
+    then pure Nothing
+    else do
+      raw <- extension .: "data"
+      case decodeSan raw of
+        Left message -> fail message
+        Right names  -> pure (Just names)) value
+
+decodeSan :: Text -> Either String [Text]
+decodeSan raw = do
+  bytes <- unescape (DataText.unpack raw)
+  (tag, body, rest) <- tlv bytes
+  if tag /= 48 || not (null rest)
+    then Left "SAN must be a DER sequence"
+    else names body
+  where
+    unescape [] = Right []
+    unescape ('\\':'x':a:b:xs)
+      | isHexDigit a && isHexDigit b =
+          ((16 * digitToInt a + digitToInt b) :) <$> unescape xs
+    unescape ('\\':c:xs) = case lookup c
+        [('n',10), ('r',13), ('t',9), ('\\',92), ('\'',39), ('"',34)] of
+      Just byte -> (byte :) <$> unescape xs
+      Nothing   -> Left "Invalid escaped SAN byte"
+    unescape (c:xs)
+      | ord c <= 255 = (ord c :) <$> unescape xs
+      | otherwise = Left "SAN contains a non-byte character"
+    names [] = Right []
+    names bytes = do
+      (tag, body, rest) <- tlv bytes
+      following <- names rest
+      if tag == 130
+        then if null body || any (> 127) body
+          then Left "Invalid SAN DNS name"
+          else pure (DataText.pack (map chr body) : following)
+        else pure following
+
+-- Only definite, minimally encoded DER lengths are accepted. Bound the length
+-- octets before converting to Int, and check available input before splitting.
+tlv :: [Int] -> Either String (Int, [Int], [Int])
+tlv (tag:first:rest)
+  | tag `mod` 32 == 31 = Left "Unsupported SAN tag"
+  | first < 128 = takeBody first rest
+  | otherwise =
+      let count = first - 128
+          (digits, remaining) = splitAt count rest
+          size = foldl (\n byte -> n * 256 + toInteger byte) 0 digits
+      in if count < 1 || count > 4 || length digits /= count ||
+            take 1 digits == [0] || size < 128 || size > toInteger (length remaining)
+        then Left "Invalid SAN DER length"
+        else takeBody (fromInteger size) remaining
+  where
+    takeBody size bytes
+      | size > length bytes = Left "Truncated SAN DER value"
+      | otherwise = let (body, remaining) = splitAt size bytes
+                    in Right (tag, body, remaining)
+tlv _ = Left "Truncated SAN DER header"
 
 -- | One page returned by @GET /shodan/host/search@.
 -- The total covers the whole query and may exceed this page's match count.

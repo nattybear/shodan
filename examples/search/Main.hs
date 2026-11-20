@@ -27,7 +27,7 @@ main = do
               putStrLn ("Total: " ++ show (searchTotal found))
               putStrLn ("Page: " ++ show page)
               putStrLn ("Returned: " ++ show (length (searchMatches found)))
-              putStrLn "IP\tPORT\tPRODUCT\tVERSION\tASN"
+              putStrLn "IP\tPORT\tPRODUCT\tVERSION\tASN\tCOLLECTED_UTC\tHOSTNAMES\tDOMAINS\tALPN\tCERTIFICATE_NAMES"
               mapM_ printMatch (searchMatches found)
 
 parseArguments :: [String] -> IO (Text.Text, Int)
@@ -46,4 +46,15 @@ printMatch match = putStrLn (intercalate "\t"
   , maybe "-" Text.unpack (matchProduct match)
   , maybe "-" Text.unpack (matchVersion match)
   , maybe "-" Text.unpack (matchAsn match)
+  , maybe "-" Text.unpack (matchTimestamp match)
+  , renderList (matchHostnames match)
+  , renderList (matchDomains match)
+  , renderList (matchAlpn match)
+  , renderList (matchCertificateNames match)
   ])
+
+-- Keep absent data distinct from a reported empty list.
+renderList :: Maybe [Text.Text] -> String
+renderList Nothing       = "-"
+renderList (Just [])     = "[]"
+renderList (Just values) = intercalate "," (map Text.unpack values)
