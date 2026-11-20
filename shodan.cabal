@@ -4,9 +4,22 @@ version: 0.1.0.0
 license: BSD-3-Clause
 license-file: LICENSE
 synopsis: A simple Haskell client for the Shodan API
-description: A small Shodan API client, currently under development.
+description:
+  A small Shodan API client using ordinary records and explicit IO functions.
+  Supports API plan information and search result counts, with JSON response
+  types for facet statistics. Includes executable examples and local HTTP tests.
+category: Network
+author: Joonkyu Park
+maintainer: vpark45@gmail.com
+homepage: https://github.com/nattybear/shodan
+bug-reports: https://github.com/nattybear/shodan/issues
+tested-with: GHC == 9.8.4
 build-type: Simple
 extra-source-files: README.md, .stylish-haskell.yaml
+
+source-repository head
+  type: git
+  location: https://github.com/nattybear/shodan.git
 
 library
   exposed-modules: Shodan
