@@ -16,6 +16,7 @@ import qualified Network.HTTP.Client      as HTTP
 import qualified Network.HTTP.Types       as HTTPTypes
 import qualified Network.Wai              as Wai
 import           Network.Wai.Handler.Warp (testWithApplication)
+import           SearchTests              (searchParsingTests)
 import           Shodan
 
 main :: IO ()
@@ -36,8 +37,10 @@ main = do
   rejects "non-object response" (Array mempty)
   facetTests
   countParsingTests
+  searchParsingTests
   httpTests
   countTests
+  searchHttpTests
   putStrLn "All response parsing and HTTP tests passed."
 
 facetTests :: IO ()
@@ -178,6 +181,48 @@ countTests = do
     (Left (HttpError 401))
   countResponse "count rate limited" HTTPTypes.status429 "not JSON"
     (Left (HttpError 429))
+
+searchHttpTests :: IO ()
+searchHttpTests = do
+  let key = "search-key+&"
+      query = "http.title:\"한글 + & ?\" product:nginx"
+      responseBody = "{\"total\":101,\"matches\":[{\"ip_str\":\"192.0.2.1\",\"port\":443,\"product\":\"nginx\",\"asn\":\"AS65536\"}]}"
+      expected = Right (SearchResult 101
+        [SearchMatch "192.0.2.1" 443 (Just "nginx") (Just "AS65536")] Map.empty)
+      application page request respond = do
+        check "search GET" (Wai.requestMethod request == "GET")
+        check "search path" (Wai.pathInfo request == ["shodan", "host", "search"])
+        check "search encoded parameters" (Wai.queryString request ==
+          [("key", Just (TextEncoding.encodeUtf8 key)),
+           ("query", Just (TextEncoding.encodeUtf8 query)),
+           ("page", Just page)])
+        respond (Wai.responseLBS HTTPTypes.status200 [] responseBody)
+  withMockClient key (application "1") $ \client -> do
+    actual <- searchHosts client query 1
+    check "first search page" (actual == expected)
+  withMockClient key (application "2") $ \client -> do
+    actual <- searchHosts client query 2
+    check "explicit second search page" (actual == expected)
+  manager <- HTTP.newManager HTTP.defaultManagerSettings
+    { HTTP.managerModifyRequest = \_ -> fail "Invalid page sent an HTTP request" }
+  mapM_ (\page -> do
+    actual <- searchHosts (newClientWithManager manager key) query page
+    check "invalid page rejected before HTTP" (actual == Left InvalidPage)) [0, -1]
+  let cases =
+        [ ("empty search page", HTTPTypes.status200, "{\"total\":0,\"matches\":[]}",
+            Right (SearchResult 0 [] Map.empty))
+        , ("search unauthorized", HTTPTypes.status401, "{\"error\":\"search-key+&\"}",
+            Left (HttpError 401))
+        , ("search rate limited", HTTPTypes.status429, "not JSON", Left (HttpError 429))
+        , ("search invalid JSON", HTTPTypes.status200, "not JSON", Left InvalidResponse)
+        , ("search invalid match", HTTPTypes.status200,
+            "{\"total\":1,\"matches\":[{}]}", Left InvalidResponse)
+        ]
+  mapM_ (\(label, status, body, wanted) -> do
+    let mock _ respond = respond (Wai.responseLBS status [] body)
+    withMockClient key mock $ \client -> do
+      actual <- searchHosts client query 1
+      check label (actual == wanted)) cases
 
 countResponse :: String -> HTTPTypes.Status -> Lazy.ByteString
   -> Either ShodanError CountResult -> IO ()

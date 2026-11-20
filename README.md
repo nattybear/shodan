@@ -4,8 +4,12 @@ A small Haskell client for the [Shodan API](https://developer.shodan.io/api).
 
 Licensed under the [BSD 3-Clause License](LICENSE).
 
-This project currently supports `GET /api-info` (`ApiInfo` and `UsageLimits`)
-and `GET /shodan/host/count` (`CountResult`). The API-info example fields and
+Version **0.2.0.0** is being prepared for release. See the [changelog](CHANGELOG.md)
+for additions and the `ShodanError` constructor change requiring a PVP major bump.
+
+This project supports `GET /api-info` (`ApiInfo` and `UsageLimits`),
+`GET /shodan/host/count` (`CountResult`), and one-page
+`GET /shodan/host/search` (`SearchResult`). The API-info example fields and
 the count response's `total` field are required; unknown fields are ignored.
 Numeric values use `Integer`; count totals must be nonnegative.
 
@@ -75,8 +79,9 @@ The library function is:
 countHosts :: Client -> Text -> IO (Either ShodanError CountResult)
 ```
 
-Read the total with `countTotal`. Optional facet requests and individual search
-results are not supported yet. According to the [official count endpoint
+Read the total with `countTotal`. For individual search results, use
+`searchHosts` as described below. Optional facet requests are not supported yet.
+According to the [official count endpoint
 documentation](https://developer.shodan.io/api), this call uses no query credits.
 
 ## Facet response type
@@ -108,6 +113,49 @@ will be added separately.
 Both fields are required. Unknown fields are ignored, while missing fields,
 invalid counts, and non-object buckets are rejected.
 
+## Search (0.2.0.0, unreleased)
+
+Version 0.2.0.0 adds one-page searches:
+
+```haskell
+searchHosts :: Client -> Text -> Int -> IO (Either ShodanError SearchResult)
+```
+
+The page number starts at 1. Values below 1 return `Left InvalidPage` before
+any request. Each call retrieves exactly the requested page; additional pages
+are not fetched automatically. Shodan requires pages past 100 to be requested
+in order.
+
+With `SHODAN_API_KEY` set, the executable accepts a query and an optional page
+(default 1):
+
+```sh
+cabal run shodan-search -- 'product:nginx country:KR'
+cabal run shodan-search -- 'product:nginx country:KR' 2
+```
+
+These commands call Shodan and can use query credits: a filtered query or any
+page after the first uses a credit under the [official API
+policy](https://developer.shodan.io/api). The example prints the total across
+all pages, the selected page number, the returned service count, and a table of
+IP, port, product, and ASN. Missing product/ASN values are displayed as `-`.
+
+`SearchMatch` describes one matching service with `matchIp`, `matchPort`,
+`matchProduct`, and `matchAsn`. IP text and an integer port from 0 through 65535
+are required. Product and ASN are optional: missing or null values become
+`Nothing`, while other non-text values are rejected. IP syntax is not validated.
+Unknown banner fields are ignored.
+
+`SearchResult` contains `searchTotal`, `searchMatches`, and `searchFacets`.
+The total covers all pages, while the matches describe one page and preserve
+service order (multiple services may share an IP). Total and matches are
+required; the total is a nonnegative `Integer`. Facets follow the same parsing
+rules as `CountResult`.
+
+Optional facet requests and field selection are not supported yet. Search
+tests use local JSON fixtures and a mock HTTP server, and do not consume Shodan
+query credits. A one-page live search has also succeeded manually.
+
 ## Build
 
 The initial development compiler is GHC 9.8.4.
@@ -136,8 +184,9 @@ cabal install stylish-haskell-0.14.6.0 --flags=-ghc-lib --constraint='ghc-lib-pa
 With the Cabal executable directory on `PATH`, run from the project directory:
 
 ```sh
-stylish-haskell -i src/Shodan.hs test/Main.hs examples/api-info/Main.hs
+stylish-haskell -i src/Shodan.hs test/*.hs examples/api-info/Main.hs
 stylish-haskell -i examples/count/Main.hs
+stylish-haskell -i examples/search/Main.hs
 cabal test
 ```
 
@@ -145,10 +194,13 @@ cabal test
 
 - `shodan.cabal`: package and library settings.
 - `cabal.project`: local Cabal project settings.
+- `CHANGELOG.md`: release history and compatibility notes.
 - `src/Shodan.hs`: client, errors, response records, and JSON parsing.
 - `examples/api-info/Main.hs`: executable example using an environment variable.
 - `examples/count/Main.hs`: count-query executable using the same environment variable.
+- `examples/search/Main.hs`: one-page search executable with an optional page argument.
 - `test/Main.hs`: response parsing and HTTP tests against a local mock server.
+- `test/SearchTests.hs`: search-response JSON parsing tests.
 
 No API key is needed to build or test. Automated tests do not call Shodan.
 They check request encoding, successful responses, HTTP errors, invalid JSON,

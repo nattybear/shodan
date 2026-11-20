@@ -1,13 +1,14 @@
 cabal-version: 2.4
 name: shodan
-version: 0.1.0.0
+version: 0.2.0.0
 license: BSD-3-Clause
 license-file: LICENSE
 synopsis: A simple Haskell client for the Shodan API
 description:
   A small Shodan API client using ordinary records and explicit IO functions.
-  Supports API plan information and search result counts, with JSON response
-  types for facet statistics. Includes executable examples and local HTTP tests.
+  Supports API plan information, search result counts, and paginated searches,
+  with JSON response types for facet statistics. Includes executable examples
+  and local HTTP tests.
 category: Network
 author: Joonkyu Park
 maintainer: vpark45@gmail.com
@@ -15,7 +16,7 @@ homepage: https://github.com/nattybear/shodan
 bug-reports: https://github.com/nattybear/shodan/issues
 tested-with: GHC == 9.8.4
 build-type: Simple
-extra-source-files: README.md, .stylish-haskell.yaml
+extra-source-files: README.md, CHANGELOG.md, .stylish-haskell.yaml
 
 source-repository head
   type: git
@@ -55,9 +56,20 @@ executable shodan-count
   default-language: Haskell2010
   ghc-options: -Wall -threaded
 
+executable shodan-search
+  main-is: Main.hs
+  hs-source-dirs: examples/search
+  build-depends:
+    base >= 4.19 && < 5,
+    shodan,
+    text >= 2.1 && < 2.2
+  default-language: Haskell2010
+  ghc-options: -Wall -threaded
+
 test-suite shodan-test
   type: exitcode-stdio-1.0
   main-is: Main.hs
+  other-modules: SearchTests
   hs-source-dirs: test
   build-depends:
     base >= 4.19 && < 5,

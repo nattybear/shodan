@@ -8,18 +8,22 @@ module Shodan
   , ShodanError (..)
   , getApiInfo
   , countHosts
+  , searchHosts
   , CountResult (..)
   , Facet (..)
+  , SearchMatch (..)
+  , SearchResult (..)
   , ApiInfo (..)
   , UsageLimits (..)
   ) where
 
 import           Control.Exception       (catch)
 import           Data.Aeson              (FromJSON (..), Value, eitherDecode',
-                                          withObject, (.!=), (.:!), (.:))
+                                          withObject, (.!=), (.:!), (.:), (.:?))
 import           Data.Map.Strict         (Map)
 import qualified Data.Map.Strict         as Map
 import           Data.Text               (Text)
+import qualified Data.Text               as DataText
 import qualified Data.Text.Encoding      as Text
 import qualified Network.HTTP.Client     as HTTP
 import           Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -49,6 +53,8 @@ data ShodanError
   = NetworkError
   | HttpError Int
   | InvalidResponse
+  | InvalidPage
+    -- ^ Search page numbers must be at least 1. No request was made.
   deriving (Eq, Show)
 
 -- | Retrieve @GET https://api.shodan.io/api-info@.
@@ -64,6 +70,17 @@ getApiInfo client = getJSON client "/api-info" []
 -- According to Shodan's documentation this endpoint uses no query credits.
 countHosts :: Client -> Text -> IO (Either ShodanError CountResult)
 countHosts client query = getJSON client "/shodan/host/count" [("query", query)]
+
+-- | Retrieve one page from @GET /shodan/host/search@.
+-- The page number starts at 1. No additional pages are fetched automatically.
+-- Filtered queries and requests after page 1 use query credits. Requests past
+-- page 100 must be made in order, as required by Shodan. Optional facets and
+-- field selection are not requested.
+searchHosts :: Client -> Text -> Int -> IO (Either ShodanError SearchResult)
+searchHosts client query page
+  | page < 1 = pure (Left InvalidPage)
+  | otherwise = getJSON client "/shodan/host/search"
+      [("query", query), ("page", DataText.pack (show page))]
 
 -- | Total matching results and optional breakdowns from @GET /shodan/host/count@.
 data CountResult = CountResult
@@ -102,6 +119,50 @@ instance FromJSON Facet where
     if count < 0
       then fail "Facet count must not be negative"
       else pure (Facet value count)
+
+-- | One matching service in a search response, rather than a unique host.
+-- Unmodelled banner fields are ignored. The IP address is preserved as text;
+-- its syntax is not validated here.
+data SearchMatch = SearchMatch
+  { matchIp      :: Text
+    -- ^ Required @ip_str@ field, usable for IPv4 or IPv6 text.
+  , matchPort    :: Int
+    -- ^ Required integer port, from 0 through 65535.
+  , matchProduct :: Maybe Text
+    -- ^ Detected product; absent or null means 'Nothing'.
+  , matchAsn     :: Maybe Text
+    -- ^ ASN such as @AS65536@; absent or null means 'Nothing'.
+  } deriving (Eq, Show)
+
+instance FromJSON SearchMatch where
+  parseJSON = withObject "SearchMatch" $ \o -> do
+    ip <- o .: "ip_str"
+    port <- o .: "port"
+    productName <- o .:? "product"
+    asn <- o .:? "asn"
+    if port < 0 || port > 65535
+      then fail "Search match port must be between 0 and 65535"
+      else pure (SearchMatch ip port productName asn)
+
+-- | One page returned by @GET /shodan/host/search@.
+-- The total covers the whole query and may exceed this page's match count.
+data SearchResult = SearchResult
+  { searchTotal   :: Integer
+    -- ^ Required nonnegative total across all pages.
+  , searchMatches :: [SearchMatch]
+    -- ^ Required service list; an empty page is valid. Order is preserved.
+  , searchFacets  :: Map Text [Facet]
+    -- ^ Optional breakdowns. Missing means an empty map; null is rejected.
+  } deriving (Eq, Show)
+
+instance FromJSON SearchResult where
+  parseJSON = withObject "SearchResult" $ \o -> do
+    total <- o .: "total"
+    matches <- o .: "matches"
+    facets <- o .:! "facets" .!= Map.empty
+    if total < 0
+      then fail "Search total must not be negative"
+      else pure (SearchResult total matches facets)
 
 -- Shared transport keeps status handling and key protection consistent.
 getJSON :: FromJSON a => Client -> Text -> [(Text, Text)]
